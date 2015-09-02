@@ -1,0 +1,709 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Net::SSH::Any</title>
+<meta name="author" content="(Salvador Fandiño)"/>
+
+<link rel="stylesheet" href="./reveal.js/css/reveal.css"/>
+<link rel="stylesheet" href="./reveal.js/css/theme/black.css" id="theme"/>
+<link rel="stylesheet" href=""/>
+<!-- If the query includes 'print-pdf', include the PDF print sheet -->
+<script>
+    if( window.location.search.match( /print-pdf/gi ) ) {
+        var link = document.createElement( 'link' );
+        link.rel = 'stylesheet';
+        link.type = 'text/css';
+        link.href = './reveal.js/css/print/pdf.css';
+        document.getElementsByTagName( 'head' )[0].appendChild( link );
+    }
+</script>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+<section id="sec-title-slide">
+<h1>Net::SSH::Any</h1>
+<h2>Salvador Fandiño</h2>
+<h2><a href="mailto:sfandino@yahoo.com">sfandino@yahoo.com</a></h2>
+<h2></h2>
+</section>
+
+<section>
+<section id="slide-orgheadline7">
+<h2 id="orgheadline7">SSH 201</h2>
+<div class="outline-text-2" id="text-orgheadline7">
+</div></section>
+<section id="slide-orgheadline1">
+<h3 id="orgheadline1">The protocol, roughly</h3>
+<p>
+Two stages:
+</p>
+
+<ol>
+<li>Handshaking: connection setup, version negotiation, encryption, compression, remote host authentication, client authentication.</li>
+
+<li>Data transfer: channels.</li>
+
+</ol>
+
+
+</section>
+<section id="slide-orgheadline2">
+<h3 id="orgheadline2">The SSH channel</h3>
+<ul>
+<li>Bidirectional stream between server and client (<code>in</code>, <code>out</code>, <code>err</code>).</li>
+
+<li>Can be initiated by both server and client.</li>
+
+<li>Created and destroyed dynamically.</li>
+
+<li>One SSH connection can run several channels in parallel.</li>
+
+<li>End-point types:
+
+<ul>
+<li>standard: <code>shell</code>, <code>exec</code>, <code>tcp-ip</code>, <code>X11</code>, <code>agent</code>, <code>subsystem</code>, etc.</li>
+
+<li>extensions: <code>UNIX</code>, <code>vpn</code>, etc. (OpenSSH)</li>
+
+</ul></li>
+
+<li><code>shell/exec</code> specific operations: exit/signal code, send signal.</li>
+
+</ul>
+
+</section>
+<section id="slide-orgheadline3">
+<h3 id="orgheadline3">Shell Vs. exec</h3>
+<ul>
+<li><p>
+<code>shell</code> → runs an interactive session - bad for automation:
+</p>
+
+<div class="org-src-container">
+
+<pre  class="src src-sh">$ ssh host
+<span style="color: #b22222;"># </span><span style="color: #b22222;">==&gt; /bin/sh -i</span>
+</pre>
+</div></li>
+
+<li><p>
+<code>exec</code> → tells the shell to run a single command:
+</p>
+
+<div class="org-src-container">
+
+<pre  class="src src-sh">$ ssh host $<span style="color: #a0522d;">cmd</span>
+<span style="color: #b22222;"># </span><span style="color: #b22222;">==&gt; /bin/sh -c $cmd</span>
+</pre>
+</div></li>
+
+</ul>
+
+</section>
+<section id="slide-orgheadline4">
+<h3 id="orgheadline4">On top of SSH</h3>
+<p>
+These are not protocol extensions but just commands and protocols that (can) use a SSH channel as the transport layer:
+</p>
+
+<ul>
+<li><code>scp</code>, <code>rsync</code>, <code>git</code>, etc.</li>
+
+<li><code>SFTP</code> (subsystem)</li>
+
+</ul>
+
+</section>
+<section id="slide-orgheadline5">
+<h3 id="orgheadline5">Popular implementations</h3>
+<ul>
+<li>Full client+server implementations
+<ul>
+<li><a href="http://www.openssh.com/"><b>OpenSSH</b></a> and forks.</li>
+<li><a href="http://www.ssh.com/products/tectia-ssh">Tectia SSH</a> (proprietary).</li>
+<li><a href="https://matt.ucc.asn.au/dropbear/dropbear.html">Dropbear</a></li>
+
+</ul></li>
+
+<li>Libraries
+<ul>
+<li><a href="http://www.libssh.org/">libssh</a>: server and client, buggy, used by GitHub.</li>
+<li><a href="http://libssh2.org/">libssh2</a>: client only, buggy, used by curl.</li>
+<li>libopenssh: OpenSSH as a library, WIP.</li>
+
+</ul></li>
+
+<li>Programming language specific
+<ul>
+<li>Python: <a href="http://www.paramiko.org/">paramiko</a></li>
+<li>Perl: <a href="https://metacpan.org/pod/Net::SSH::Perl"><code>Net::SSH::Perl</code></a></li>
+<li>Java, C#, etc.</li>
+
+</ul></li>
+
+<li>OS specific: Windows, VMS, etc.</li>
+
+</ul>
+
+</section>
+<section id="slide-orgheadline6">
+<h3 id="orgheadline6">Implementing SSH is hard!</h3>
+
+
+</section>
+</section>
+<section>
+<section id="slide-orgheadline11">
+<h2 id="orgheadline11">Perl &amp; SSH</h2>
+<div class="outline-text-2" id="text-orgheadline11">
+</div></section>
+<section id="slide-orgheadline8">
+<h3 id="orgheadline8">Several ways:</h3>
+<ul>
+<li><code>system "ssh $target $cmd";</code>: publickey auth only, inefficient, slow.</li>
+
+<li><a href="https://metacpan.org/pod/Expect"><code>Expect</code></a>, <a href="https://metacpan.org/pod/Net::SSH::Expect"><code>Net::SSH::Expect</code></a>: talking to the shell, unreliable.</li>
+
+<li><a href="https://metacpan.org/pod/Net::SSH::Perl"><code>Net::SSH::Perl</code></a>: old, <a href="https://rt.cpan.org/Dist/Display.html?Name=Net-SSH-Perl">buggy</a>, barely maintained, very difficult installation.</li>
+
+<li><a href="https://metacpan.org/pod/Net::SSH2"><code>Net::SSH2</code></a>: low level, C-ish, insecure by default.</li>
+
+<li><a href="https://metacpan.org/pod/Net::OpenSSH"><code>Net::OpenSSH</code></a>: high level and perlish but no Windows.</li>
+
+<li>&#x2026;</li>
+
+</ul>
+
+</section>
+<section id="slide-orgheadline9">
+<h3 id="orgheadline9">No one's perfect!</h3>
+
+</section>
+<section id="slide-orgheadline10">
+<h3 id="orgheadline10">What do we need?</h3>
+<ul>
+<li>Powerful, easy to use, perlish API.</li>
+
+<li>Easy to install (restricted environments).</li>
+
+<li>Robust, efficient, stable.</li>
+
+<li>Portable: Windows, POSIX &amp; BSD.</li>
+
+<li>Shell and command mode.</li>
+
+<li>Support for SFTP and SCP.</li>
+
+</ul>
+
+
+</section>
+</section>
+<section>
+<section id="slide-orgheadline31">
+<h2 id="orgheadline31">Net::SSH::Any</h2>
+<div class="outline-text-2" id="text-orgheadline31">
+</div></section>
+<section id="slide-orgheadline12">
+<h3 id="orgheadline12">Warning</h3>
+<p>
+I am talking today about the development version today!
+</p>
+
+<p>
+<a href="http://github.com/salva/p5-Net-SSH-Any">http://github.com/salva/p5-Net-SSH-Any</a>
+</p>
+
+</section>
+<section id="slide-orgheadline13">
+<h3 id="orgheadline13">The idea</h3>
+<p>
+The idea behind <a href="https://metacpan.org/pod/Net::SSH::Any">Net::SSH::Any</a> is to have a set of plugable backends providing support for the most low level SSH operations and then build other more powerful abstractions on top of that.
+</p>
+
+</section>
+<section id="slide-orgheadline14">
+<h3 id="orgheadline14">The backends</h3>
+<ul>
+<li><code>Net_OpenSSH</code>:
+<ul>
+<li>Requires <code>Net::OpenSSH</code> and the OpenSSH client.</li>
+<li>Reliable, stable, fast.</li>
+<li>No Windows.</li>
+
+</ul></li>
+
+<li><code>Net_SSH2</code>:
+<ul>
+<li>Requires <code>Net::SSH2</code> and <code>libssh2</code>.</li>
+<li>Fast. Reliability and stability <a href="http://blogs.perl.org/users/salvador_fandino/2015/08/help-me-test-netssh2.html">improving</a>.</li>
+
+</ul></li>
+
+<li><code>(Ssh|Plink|Dbclient|Sexec|Sshg3)_Cmd</code>
+<ul>
+<li>Runs almost anywhere where a SSH client is installed.</li>
+<li>Inefficient → slow.</li>
+<li>Feature support varies, usually a SMOP.</li>
+
+</ul></li>
+
+</ul>
+
+</section>
+<section id="slide-orgheadline24">
+<h3 id="orgheadline24">The API</h3>
+<p>
+Initially, a subset of <code>Net::OpenSSH</code> API - The most useful methods and features that could be implemented on top of <code>Net::SSH2</code>.
+</p>
+
+<p>
+But then it got its own life&#x2026;
+</p>
+
+</section>
+<section id="slide-orgheadline15">
+<h4 id="orgheadline15">Constructor and connecting</h4>
+<div class="org-src-container">
+
+<pre  class="src src-cperl"><span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$ssh1</span> = Net::SSH::Any-&gt;new($target, <span style="color: #ff0000; background-color: #eeeed1; font-weight: bold; font-style: italic;">%opts</span>);
+<span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$ssh2</span> = Net::SSH::Any-&gt;new($host, <span style="color: #8b2252;">user</span> =&gt; $user, <span style="color: #8b2252;">password</span> =&gt; $pwd);
+<span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$ssh3</span> = Net::SSH::Any-&gt;new($host,
+                              <span style="color: #8b2252;">backends</span> =&gt; [<span style="color: #66cd00;">qw</span><span style="color: #8b2252;">(Net_SSH2 Plink_Cmd)</span>],
+                              <span style="color: #8b2252;">local_plink_cmd</span> =&gt; <span style="color: #8b2252;">'C:\\\\PuTTY\\plink.exe'</span>);
+</pre>
+</div>
+
+<p>
+Valid options: <code>user</code>, <code>port</code>, <code>password</code>, <code>key_path</code>, <code>passphrase</code>, <code>batch_mode</code>, <code>timeout</code>, <code>encoding</code>, <code>argument_encoding</code>, <code>stream_encoding</code>, <code>remote_shell</code>, <code>known_hosts_path</code>, <code>strict_host_key_checking</code>, <code>remote_*_cmd</code>, <code>local_*_cmd</code>, <code>backends</code>, <code>backend_opts</code>.
+</p>
+
+</section>
+<section id="slide-orgheadline16">
+<h4 id="orgheadline16">Running remote commands</h4>
+<ul>
+<li><p>
+<code>system</code>: runs remote command redirecting the output to local file descriptors - <code>STDOUT</code> and <code>STDERR</code> by default:
+</p>
+
+<div class="org-src-container">
+
+<pre  class="src src-cperl"><span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$ok</span> = $ssh-&gt;<span style="color: #228b22;">system</span>($cmd);
+</pre>
+</div></li>
+
+<li><p>
+<code>capture2</code>: runs remote command capturing both <code>stdout</code> and <code>stderr</code>:
+</p>
+
+<div class="org-src-container">
+
+<pre  class="src src-cperl"><span style="color: #a020f0;">my</span> (<span style="color: #a0522d;">$out</span>, <span style="color: #a0522d;">$err</span>) = $ssh-&gt;capture2($cmd)
+</pre>
+</div></li>
+
+<li><p>
+<code>capture</code>: captures <code>stdout</code>, sends <code>stderr</code> to file descriptor:
+</p>
+
+<div class="org-src-container">
+
+<pre  class="src src-cperl"><span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$out</span> = $ssh-&gt;capture($cmd);
+<span style="color: #a020f0;">my</span> <span style="color: #0000ff; background-color: #eeeed1; font-weight: bold;">@out</span> = $ssh-&gt;capture($cmd);
+</pre>
+</div></li>
+
+</ul>
+
+</section>
+<section id="slide-orgheadline17">
+<h4 id="orgheadline17">Optional method arguments</h4>
+<div class="org-src-container">
+
+<pre  class="src src-cperl"><span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$ok</span> = $ssh-&gt;<span style="color: #228b22;">system</span>({ <span style="color: #8b2252;">stdout_file</span> =&gt; <span style="color: #8b2252;">"/fmp/foo.out"</span>,
+                        <span style="color: #8b2252;">stderr_to_stdout</span> =&gt; 1,
+                        <span style="color: #8b2252;">timeout</span> =&gt; 10 },
+                      $cmd);
+</pre>
+</div>
+
+<p>
+Valid options: <code>timeout</code>, <code>stdin_data</code>, <code>stdout_fh</code>, <code>stdout_file</code>, <code>stdout_discard</code>, <code>stderr_to_stdout</code>, <code>stderr_fh</code>, <code>stderr_file</code>, <code>stderr_discard</code>, <code>quote_args</code>, <code>glob_quoting</code>, <code>encoding</code>, <code>stream_encoding</code>, <code>argument_encoding</code>, <code>remote_shell</code>
+</p>
+
+</section>
+<section id="slide-orgheadline18">
+<h4 id="orgheadline18">STDIN for the remote command</h4>
+<ul>
+<li>Default: <code>&lt;/dev/null</code></li>
+
+<li><p>
+Read from local file descriptor:
+</p>
+
+<div class="org-src-container">
+
+<pre  class="src src-cperl"><span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$out</span> = $ssh-&gt;capture({ <span style="color: #8b2252;">stdin_fh</span> =&gt; \*STDIN }, $cmd);
+</pre>
+</div></li>
+
+<li><p>
+Read from a perl variable:
+</p>
+
+<div class="org-src-container">
+
+<pre  class="src src-cperl"><span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$out</span> = $ssh-&gt;capture({ <span style="color: #8b2252;">stdin_data</span> =&gt; <span style="color: #8b2252;">"Use the force, Luke!\n"</span> },
+                        $cmd);
+</pre>
+</div></li>
+
+</ul>
+
+
+</section>
+<section id="slide-orgheadline19">
+<h4 id="orgheadline19">Talking to the remote shell</h4>
+<div class="org-src-container">
+
+<pre  class="src src-cperl"><span style="color: #a020f0;">my</span> <span style="color: #0000ff; background-color: #eeeed1; font-weight: bold;">@cmds</span> = (<span style="color: #8b2252;">'enable'</span>, <span style="color: #8b2252;">'show config net'</span>, <span style="color: #8b2252;">'exit'</span>);
+<span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$output</span> = $ssh-&gt;capture({ <span style="color: #8b2252;">stdin_data</span> =&gt; <span style="color: #228b22;">join</span>(<span style="color: #8b2252;">"\r\n"</span>, <span style="color: #0000ff; background-color: #eeeed1; font-weight: bold;">@cmds</span>, <span style="color: #8b2252;">''</span>) });
+                           <span style="color: #b22222;"># </span><span style="color: #b22222;">look mum, no $cmd!</span>
+</pre>
+</div>
+
+</section>
+<section id="slide-orgheadline20">
+<h4 id="orgheadline20">Argument quoting</h4>
+<p>
+Imitate Perl built-ins:
+</p>
+
+<ul>
+<li><p>
+one argument → no quoting, pass it as given:
+</p>
+
+<div class="org-src-container">
+
+<pre  class="src src-cperl"><span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$txt</span> = &lt;&gt;;
+$ssh-&gt;<span style="color: #228b22;">system</span>(<span style="color: #8b2252;">"echo $txt"</span>); <span style="color: #b22222;"># </span><span style="color: #b22222;">don't!</span>
+</pre>
+</div></li>
+
+<li><p>
+several arguments → quote them using specific remote shell rules (i.e. <code>bash</code>, <code>ksh</code>, <code>csh</code>, etc.):
+</p>
+
+<div class="org-src-container">
+
+<pre  class="src src-cperl">$ssh-&gt;<span style="color: #228b22;">system</span>(<span style="color: #8b2252;">"echo"</span>, $txt); <span style="color: #b22222;"># </span><span style="color: #b22222;">safe</span>
+</pre>
+</div></li>
+
+<li><p>
+override:
+</p>
+
+<div class="org-src-container">
+
+<pre  class="src src-cperl">$ssh-&gt;<span style="color: #228b22;">system</span>({<span style="color: #8b2252;">quote_args</span> =&gt; 1}, <span style="color: #8b2252;">'/bin/I am&gt;a*cool$cmd'</span>);
+</pre>
+</div></li>
+
+</ul>
+
+</section>
+<section id="slide-orgheadline21">
+<h4 id="orgheadline21">Advanced argument quoting</h4>
+<p>
+The remote shell is unavoidable&#x2026; we can take advantage of that!
+</p>
+
+<ul>
+<li><p>
+Glob quoting, wildcards pass unquoted:
+</p>
+
+<div class="org-src-container">
+
+<pre  class="src src-cperl"><span style="color: #a020f0;">my</span> <span style="color: #0000ff; background-color: #eeeed1; font-weight: bold;">@fns</span> = $ssh-&gt;capture(<span style="color: #8b2252;">ls</span> =&gt; \<span style="color: #8b2252;">"*.txt"</span>);
+</pre>
+</div></li>
+
+<li><p>
+Unquoted fragments:
+</p>
+
+<div class="org-src-container">
+
+<pre  class="src src-cperl"><span style="color: #a020f0;">my</span> <span style="color: #0000ff; background-color: #eeeed1; font-weight: bold;">@cmd1</span> = (<span style="color: #8b2252;">'cd'</span>, <span style="color: #66cd00;">q</span><span style="color: #8b2252;">(Music/The Ramones/Hey! Ho! Let's Go')</span>);
+<span style="color: #a020f0;">my</span> <span style="color: #0000ff; background-color: #eeeed1; font-weight: bold;">@cmd2</span> = (<span style="color: #8b2252;">'mplayer'</span>, <span style="color: #66cd00;">q</span><span style="color: #8b2252;">(53rd &amp; 3rd)</span>);
+<span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$ssh</span>-&gt;<span style="color: #228b22;">system</span>(<span style="color: #0000ff; background-color: #eeeed1; font-weight: bold;">@cmd1</span>, \\<span style="color: #8b2252;">'&amp;&amp;'</span>, <span style="color: #0000ff; background-color: #eeeed1; font-weight: bold;">@cmd2</span>)
+<span style="color: #b22222;"># </span><span style="color: #b22222;">actual remote cmd:</span>
+<span style="color: #b22222;">#   </span><span style="color: #b22222;">cd 'Music/The Ramones/Hey! Ho! Let'\''s Go'\' &amp;&amp; mplayer '53rd &amp; 3rd'</span>
+
+<span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$ssh</span>-&gt;<span style="color: #228b22;">system</span>(<span style="color: #8b2252;">foonolizator</span> =&gt; $src, \\<span style="color: #8b2252;">'&gt;/tmp/log 2&gt;&amp;1'</span>);
+</pre>
+</div></li>
+
+</ul>
+
+</section>
+<section id="slide-orgheadline22">
+<h4 id="orgheadline22">Quoting for other shells and OSs</h4>
+<ul>
+<li><p>
+MS Windows:
+</p>
+
+<div class="org-src-container">
+
+<pre  class="src src-cperl"><span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$ssh</span> = Net::SSH::Any-&gt;new($host, ...,
+                             <span style="color: #8b2252;">remote_shell</span> =&gt; <span style="color: #8b2252;">'MSWin'</span>);
+$ssh-&gt;<span style="color: #228b22;">system</span>({ <span style="color: #8b2252;">quote_args</span>=&gt; 1 },
+             <span style="color: #8b2252;">'C:\\\\Program Files\\Bar\\bar.exe'</span>);
+<span style="color: #b22222;"># </span><span style="color: #b22222;">there is more than that for Windows!</span>
+</pre>
+</div></li>
+
+<li>POSIX - default</li>
+
+<li><code>csh</code></li>
+
+<li><code>fish</code> (WIP)</li>
+
+<li>?</li>
+
+</ul>
+
+</section>
+<section id="slide-orgheadline23">
+<h4 id="orgheadline23">The dpipe method</h4>
+<div class="org-src-container">
+
+<pre  class="src src-cperl"><span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$dpipe</span> = $ssh-&gt;dpipe($cmd);
+</pre>
+</div>
+
+<ul>
+<li>Returns a bidirectional stream handle (similar to <code>IO::Socket</code>).</li>
+
+<li>Blocking and -almost- non-blocking usage.</li>
+
+<li>A WIP, but already heavily used internally (i.e. <code>SCP</code>).</li>
+
+</ul>
+
+
+</section>
+<section id="slide-orgheadline25">
+<h3 id="orgheadline25">SCP</h3>
+<p>
+<code>Net::SSH::Any</code> has its own full, pure-Perl SCP implementation.
+</p>
+
+<div class="org-src-container">
+
+<pre  class="src src-cperl"><span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$ok</span> = $ssh-&gt;scp_get($remote_from, $local_to);
+<span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$ok</span> = $ssh-&gt;scp_put($local_from, $remote_to);
+<span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$data</span> = $ssh-&gt;scp_get_content($remote_from);
+<span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$ok</span> = $ssh-&gt;scp_put_content($remote_to, $data);
+</pre>
+</div>
+
+<p>
+Valid options: <code>glob</code>, <code>recursive</code>, <code>copy_attr</code>, <code>copy_perm</code>, <code>copy_time</code>, <code>update</code>, <code>overwrite</code>, <code>numbered</code>.
+</p>
+
+</section>
+<section id="slide-orgheadline26">
+<h3 id="orgheadline26">Abusing SCP</h3>
+<div class="org-src-container">
+
+<pre  class="src src-cperl"><span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$ok</span> = $ssh-&gt;scp_mkdir($remote_dir);
+
+<span style="color: #a020f0;">my</span> <span style="color: #0000ff; background-color: #eeeed1; font-weight: bold;">@files</span> = $ssh-&gt;scp_find($remote_dir); <span style="color: #b22222;"># </span><span style="color: #b22222;">WIP</span>
+</pre>
+</div>
+
+</section>
+<section id="slide-orgheadline27">
+<h3 id="orgheadline27">SFTP</h3>
+<div class="org-src-container">
+
+<pre  class="src src-cperl"><span style="color: #a020f0;">my</span> <span style="color: #a0522d;">$sftp</span> = $ssh-&gt;sftp;
+$sftp-&gt;put($src, $target);
+</pre>
+</div>
+
+<ul>
+<li>Returns a <a href="https://metacpan.org/pod/Net::SFTP::Foreign"><code>Net::SFTP::Foreign</code></a> object.</li>
+
+<li>Stable, feature rich, easy to use module&#x2026; and I am the author too :-)</li>
+
+<li>Still requiring some work on the <code>Net_SSH2</code> backend.</li>
+
+</ul>
+
+</section>
+<section id="slide-orgheadline28">
+<h3 id="orgheadline28">Other features</h3>
+<ul>
+<li>Timeouts.</li>
+
+<li>Error handling.</li>
+
+<li>Argument and data stream encoding.</li>
+
+<li>Connection forwarding - a-la <code>netcat</code>.</li>
+
+</ul>
+
+
+</section>
+<section id="slide-orgheadline29">
+<h3 id="orgheadline29">Net::SSH::Any::Test</h3>
+<p>
+Testing helper for SSH: I need to connect somewhere!
+</p>
+
+<ul>
+<li>Look for a running SSH server or start a new one or whatever.</li>
+
+<li>Redesign of my (discontinued) <a href="https://metacpan.org/pod/Test::SSH"><code>Test::SSH</code></a>.</li>
+
+<li>Very WIP.</li>
+
+</ul>
+
+
+</section>
+<section id="slide-orgheadline30">
+<h3 id="orgheadline30">Future work</h3>
+<ul>
+<li>Stabilize. Fix bugs. Fix <code>Net::SSH2</code>.</li>
+
+<li>Complete backend feature coverage.</li>
+
+<li>Integrate or assimilate other modules:
+
+<ul>
+<li><a href="https://metacpan.org/pod/Remote::Object"><code>Remote::Object</code></a></li>
+
+<li>Modules by Oliver Gorwits: <a href="https://metacpan.org/pod/Net::CLI::Interact"><code>Net::CLI::Interact</code></a>, <a href="https://metacpan.org/pod/Net::Appliance::Phrasebook"><code>Net::Appliance::Phrasebook</code></a>, etc.</li>
+
+<li><a href="https://www.rexify.org/"><code>Rex</code></a></li>
+
+</ul></li>
+
+<li>More backends: <code>Net::SSH::Perl</code>, <code>Local</code>, ?</li>
+
+<li>Hard to do: gateway support, async/parallel mode, integrate external commands <code>rsync</code>, <code>git</code>, etc.</li>
+
+<li>Feedback welcome!</li>
+
+</ul>
+
+
+</section>
+</section>
+<section>
+<section id="slide-orgheadline33">
+<h2 id="orgheadline33">Conclusions</h2>
+<div class="outline-text-2" id="text-orgheadline33">
+</div></section>
+<section id="slide-orgheadline32">
+<h3 id="orgheadline32">Net::SSH::Any</h3>
+<ul>
+<li>Powerful, easy to use, feature rich, perlish API.</li>
+
+<li>Portable.</li>
+
+<li>Lets user compromise between: easy of install, dependencies, efficiency.</li>
+
+<li>SFTP and SCP.</li>
+
+<li>Getting stable and robust.</li>
+
+</ul>
+
+
+</section>
+</section>
+<section>
+<section id="slide-orgheadline34">
+<h2 id="orgheadline34">The Perl, SSH &amp; Rex hackathon</h2>
+<p>
+This Saturday. We need you!
+</p>
+
+<p>
+No prior knowledge required.
+</p>
+
+<p>
+Check the <a href="http://act.yapc.eu/ye2015/wiki?node=Hackathons">Hackathons</a> page on the conference wiki for the details.
+</p>
+
+
+</section>
+</section>
+<section>
+<section id="slide-orgheadline35">
+<h2 id="orgheadline35">Questions?</h2>
+
+</section>
+</section>
+<section>
+<section id="slide-orgheadline36">
+<h2 id="orgheadline36">Thank you!</h2>
+<p>
+This presentation will shortly appear at <a href="https://github.com/salva/ps-Net-SSH-Any">https://github.com/salva/ps-Net-SSH-Any</a>
+</p>
+</section>
+</section>
+</div>
+</div>
+
+<script src="./reveal.js/lib/js/head.min.js"></script>
+<script src="./reveal.js/js/reveal.js"></script>
+
+<script>
+// Full list of configuration options available here:
+// https://github.com/hakimel/reveal.js#configuration
+Reveal.initialize({
+
+controls: true,
+progress: true,
+history: false,
+center: true,
+slideNumber: true,
+rollingLinks: false,
+keyboard: true,
+overview: true,
+
+theme: Reveal.getQueryHash().theme, // available themes are in /css/theme
+transition: Reveal.getQueryHash().transition || 'default', // default/cube/page/concave/zoom/linear/fade/none
+transitionSpeed: 'default',
+multiplex: {
+    secret: '', // null if client
+    id: '', // id, obtained from socket.io server
+    url: '' // Location of socket.io server
+},
+
+// Optional libraries used to extend on reveal.js
+dependencies: [
+ { src: './reveal.js/lib/js/classList.js', condition: function() { return !document.body.classList; } },
+ { src: './reveal.js/plugin/markdown/marked.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+ { src: './reveal.js/plugin/markdown/markdown.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+ { src: './reveal.js/plugin/zoom-js/zoom.js', async: true, condition: function() { return !!document.body.classList; } },
+ { src: './reveal.js/plugin/notes/notes.js', async: true, condition: function() { return !!document.body.classList; } }
+]
+});
+</script>
+</body>
+</html>

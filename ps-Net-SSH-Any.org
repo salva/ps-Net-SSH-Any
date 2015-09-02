@@ -1,0 +1,408 @@
+#+Title: Net::SSH::Any
+
+#+Author: Salvador Fandiño
+#+Email: sfandino@yahoo.com
+
+#+OPTIONS: toc:nil
+#+OPTIONS: num:nil
+#+OPTIONS: ^:nil
+#+REVEAL_THEME: black
+
+* SSH 201
+
+** The protocol, roughly
+
+Two stages:
+
+1. Handshaking: connection setup, version negotiation, encryption, compression, remote host authentication, client authentication.
+
+2. Data transfer: channels.
+
+
+** The SSH channel
+
+- Bidirectional stream between server and client (=in=, =out=, =err=).
+
+- Can be initiated by both server and client.
+
+- Created and destroyed dynamically.
+
+- One SSH connection can run several channels in parallel.
+
+- End-point types:
+
+  - standard: =shell=, =exec=, =tcp-ip=, =X11=, =agent=, =subsystem=, etc.
+
+  - extensions: =UNIX=, =vpn=, etc. (OpenSSH)
+
+- =shell/exec= specific operations: exit/signal code, send signal.
+
+** Shell Vs. exec
+
+- =shell= → runs an interactive session - bad for automation:
+
+  #+BEGIN_SRC sh
+  $ ssh host
+  # ==> /bin/sh -i
+  #+END_SRC
+
+- =exec= → tells the shell to run a single command:
+
+  #+BEGIN_SRC sh
+  $ ssh host $cmd
+  # ==> /bin/sh -c $cmd
+  #+END_SRC
+
+** On top of SSH
+
+These are not protocol extensions but just commands and protocols that (can) use a SSH channel as the transport layer:
+
+- =scp=, =rsync=, =git=, etc.
+
+- =SFTP= (subsystem)
+
+** Popular implementations
+
+- Full client+server implementations
+  - [[http://www.openssh.com/][*OpenSSH*]] and forks.
+  - [[http://www.ssh.com/products/tectia-ssh][Tectia SSH]] (proprietary).
+  - [[https://matt.ucc.asn.au/dropbear/dropbear.html][Dropbear]]
+
+- Libraries
+  - [[http://www.libssh.org/][libssh]]: server and client, buggy, used by GitHub.
+  - [[http://libssh2.org/][libssh2]]: client only, buggy, used by curl.
+  - libopenssh: OpenSSH as a library, WIP.
+
+- Programming language specific
+  - Python: [[http://www.paramiko.org/][paramiko]]
+  - Perl: [[https://metacpan.org/pod/Net::SSH::Perl][=Net::SSH::Perl=]]
+  - Java, C#, etc.
+
+- OS specific: Windows, VMS, etc.
+
+** Implementing SSH is hard!
+
+
+* Perl & SSH
+
+** Several ways:
+
+- =system "ssh $target $cmd";=: publickey auth only, inefficient, slow.
+
+- [[https://metacpan.org/pod/Expect][=Expect=]], [[https://metacpan.org/pod/Net::SSH::Expect][=Net::SSH::Expect=]]: talking to the shell, unreliable.
+
+- [[https://metacpan.org/pod/Net::SSH::Perl][=Net::SSH::Perl=]]: old, [[https://rt.cpan.org/Dist/Display.html?Name=Net-SSH-Perl][buggy]], barely maintained, very difficult installation.
+
+- [[https://metacpan.org/pod/Net::SSH2][=Net::SSH2=]]: low level, C-ish, insecure by default.
+
+- [[https://metacpan.org/pod/Net::OpenSSH][=Net::OpenSSH=]]: high level and perlish but no Windows.
+
+- ...
+
+** No one's perfect!
+
+** What do we need?
+
+- Powerful, easy to use, perlish API.
+
+- Easy to install (restricted environments).
+
+- Robust, efficient, stable.
+
+- Portable: Windows, POSIX & BSD.
+
+- Shell and command mode.
+
+- Support for SFTP and SCP.
+
+
+* Net::SSH::Any
+
+** Warning
+
+I am talking today about the development version today!
+
+http://github.com/salva/p5-Net-SSH-Any
+
+** The idea
+
+The idea behind [[https://metacpan.org/pod/Net::SSH::Any][Net::SSH::Any]] is to have a set of plugable backends providing support for the most low level SSH operations and then build other more powerful abstractions on top of that.
+
+** The backends
+
+- =Net_OpenSSH=:
+  - Requires =Net::OpenSSH= and the OpenSSH client.
+  - Reliable, stable, fast.
+  - No Windows.
+
+- =Net_SSH2=:
+  - Requires =Net::SSH2= and =libssh2=.
+  - Fast. Reliability and stability [[http://blogs.perl.org/users/salvador_fandino/2015/08/help-me-test-netssh2.html][improving]].
+
+- =(Ssh|Plink|Dbclient|Sexec|Sshg3)_Cmd=
+  - Runs almost anywhere where a SSH client is installed.
+  - Inefficient → slow.
+  - Feature support varies, usually a SMOP.
+
+** The API
+
+Initially, a subset of =Net::OpenSSH= API - The most useful methods and features that could be implemented on top of =Net::SSH2=.
+
+But then it got its own life...
+
+*** Constructor and connecting
+
+#+BEGIN_SRC cperl
+my $ssh1 = Net::SSH::Any->new($target, %opts);
+my $ssh2 = Net::SSH::Any->new($host, user => $user, password => $pwd);
+my $ssh3 = Net::SSH::Any->new($host,
+                              backends => [qw(Net_SSH2 Plink_Cmd)],
+			      local_plink_cmd => 'C:\\\\PuTTY\\plink.exe');
+#+END_SRC
+
+Valid options: =user=, =port=, =password=, =key_path=, =passphrase=, =batch_mode=, =timeout=, =encoding=, =argument_encoding=, =stream_encoding=, =remote_shell=, =known_hosts_path=, =strict_host_key_checking=, =remote_*_cmd=, =local_*_cmd=, =backends=, =backend_opts=.
+
+*** Running remote commands
+
+- =system=: runs remote command redirecting the output to local file descriptors - =STDOUT= and =STDERR= by default:
+
+  #+BEGIN_SRC cperl
+  my $ok = $ssh->system($cmd);
+  #+END_SRC
+
+- =capture2=: runs remote command capturing both =stdout= and =stderr=:
+
+  #+BEGIN_SRC cperl
+  my ($out, $err) = $ssh->capture2($cmd)
+  #+END_SRC
+
+- =capture=: captures =stdout=, sends =stderr= to file descriptor:
+
+  #+BEGIN_SRC cperl
+  my $out = $ssh->capture($cmd);
+  my @out = $ssh->capture($cmd);
+  #+END_SRC
+
+*** Optional method arguments
+
+#+BEGIN_SRC cperl
+my $ok = $ssh->system({ stdout_file => "/fmp/foo.out",
+                        stderr_to_stdout => 1,
+                        timeout => 10 },
+                      $cmd);
+#+END_SRC
+
+Valid options: =timeout=, =stdin_data=, =stdout_fh=, =stdout_file=, =stdout_discard=, =stderr_to_stdout=, =stderr_fh=, =stderr_file=, =stderr_discard=, =quote_args=, =glob_quoting=, =encoding=, =stream_encoding=, =argument_encoding=, =remote_shell=
+
+*** STDIN for the remote command
+
+- Default: =</dev/null=
+
+- Read from local file descriptor:
+
+  #+BEGIN_SRC cperl
+  my $out = $ssh->capture({ stdin_fh => \*STDIN }, $cmd);
+  #+END_SRC
+
+- Read from a perl variable:
+
+  #+BEGIN_SRC cperl
+  my $out = $ssh->capture({ stdin_data => "Use the force, Luke!\n" },
+                          $cmd);
+  #+END_SRC
+
+
+*** Talking to the remote shell
+
+#+BEGIN_SRC cperl
+my @cmds = ('enable', 'show config net', 'exit');
+my $output = $ssh->capture({ stdin_data => join("\r\n", @cmds, '') });
+                           # look mum, no $cmd!
+#+END_SRC
+
+*** Argument quoting
+
+Imitate Perl built-ins:
+
+- one argument → no quoting, pass it as given:
+
+  #+BEGIN_SRC cperl
+  my $txt = <>;
+  $ssh->system("echo $txt"); # don't!
+  #+END_SRC
+
+- several arguments → quote them using specific remote shell rules (i.e. =bash=, =ksh=, =csh=, etc.):
+
+  #+BEGIN_SRC cperl
+  $ssh->system("echo", $txt); # safe
+  #+END_SRC
+
+- override:
+
+  #+BEGIN_SRC cperl
+  $ssh->system({quote_args => 1}, '/bin/I am>a*cool$cmd');
+  #+END_SRC
+
+*** Advanced argument quoting
+
+The remote shell is unavoidable... we can take advantage of that!
+
+- Glob quoting, wildcards pass unquoted:
+
+  #+BEGIN_SRC cperl
+  my @fns = $ssh->capture(ls => \"*.txt");
+  #+END_SRC
+
+- Unquoted fragments:
+
+  #+BEGIN_SRC cperl
+  my @cmd1 = ('cd', q(Music/The Ramones/Hey! Ho! Let's Go'));
+  my @cmd2 = ('mplayer', q(53rd & 3rd));
+  my $ssh->system(@cmd1, \\'&&', @cmd2)
+  # actual remote cmd:
+  #   cd 'Music/The Ramones/Hey! Ho! Let'\''s Go'\' && mplayer '53rd & 3rd'
+
+  my $ssh->system(foonolizator => $src, \\'>/tmp/log 2>&1');
+  #+END_SRC
+
+*** Quoting for other shells and OSs
+
+- MS Windows:
+
+  #+BEGIN_SRC cperl
+  my $ssh = Net::SSH::Any->new($host, ...,
+                               remote_shell => 'MSWin');
+  $ssh->system({ quote_args=> 1 },
+               'C:\\\\Program Files\\Bar\\bar.exe');
+  # there is more than that for Windows!
+  #+END_SRC
+
+- POSIX - default
+
+- =csh=
+
+- =fish= (WIP)
+
+- ?
+
+*** The dpipe method
+
+  #+BEGIN_SRC cperl
+  my $dpipe = $ssh->dpipe($cmd);
+  #+END_SRC
+
+- Returns a bidirectional stream handle (similar to =IO::Socket=).
+
+- Blocking and -almost- non-blocking usage.
+
+- A WIP, but already heavily used internally (i.e. =SCP=).
+
+
+** SCP
+
+=Net::SSH::Any= has its own full, pure-Perl SCP implementation.
+
+#+BEGIN_SRC cperl
+my $ok = $ssh->scp_get($remote_from, $local_to);
+my $ok = $ssh->scp_put($local_from, $remote_to);
+my $data = $ssh->scp_get_content($remote_from);
+my $ok = $ssh->scp_put_content($remote_to, $data);
+#+END_SRC
+
+Valid options: =glob=, =recursive=, =copy_attr=, =copy_perm=, =copy_time=, =update=, =overwrite=, =numbered=.
+
+** Abusing SCP
+
+  #+BEGIN_SRC cperl
+  my $ok = $ssh->scp_mkdir($remote_dir);
+
+  my @files = $ssh->scp_find($remote_dir); # WIP
+  #+END_SRC
+
+** SFTP
+
+#+BEGIN_SRC cperl
+my $sftp = $ssh->sftp;
+$sftp->put($src, $target);
+#+END_SRC
+
+- Returns a [[https://metacpan.org/pod/Net::SFTP::Foreign][=Net::SFTP::Foreign=]] object.
+
+- Stable, feature rich, easy to use module... and I am the author too :-)
+
+- Still requiring some work on the =Net_SSH2= backend.
+
+** Other features
+
+- Timeouts.
+
+- Error handling.
+
+- Argument and data stream encoding.
+
+- Connection forwarding - a-la =netcat=.
+
+
+** Net::SSH::Any::Test
+
+Testing helper for SSH: I need to connect somewhere!
+
+- Look for a running SSH server or start a new one or whatever.
+
+- Redesign of my (discontinued) [[https://metacpan.org/pod/Test::SSH][=Test::SSH=]].
+
+- Very WIP.
+
+
+** Future work
+
+- Stabilize. Fix bugs. Fix =Net::SSH2=.
+
+- Complete backend feature coverage.
+
+- Integrate or assimilate other modules:
+
+  - [[https://metacpan.org/pod/Remote::Object][=Remote::Object=]]
+
+  - Modules by Oliver Gorwits: [[https://metacpan.org/pod/Net::CLI::Interact][=Net::CLI::Interact=]], [[https://metacpan.org/pod/Net::Appliance::Phrasebook][=Net::Appliance::Phrasebook=]], etc.
+
+  - [[https://www.rexify.org/][=Rex=]]
+
+- More backends: =Net::SSH::Perl=, =Local=, ?
+
+- Hard to do: gateway support, async/parallel mode, integrate external commands =rsync=, =git=, etc.
+
+- Feedback welcome!
+
+
+* Conclusions
+
+** Net::SSH::Any
+
+- Powerful, easy to use, feature rich, perlish API.
+
+- Portable.
+
+- Lets user compromise between: easy of install, dependencies, efficiency.
+
+- SFTP and SCP.
+
+- Getting stable and robust.
+
+
+* The Perl, SSH & Rex hackathon
+
+This Saturday. We need you!
+
+No prior knowledge required.
+
+Check the [[http://act.yapc.eu/ye2015/wiki?node=Hackathons][Hackathons]] page on the conference wiki for the details.
+
+
+* Questions?
+
+* Thank you!
+
+This presentation will shortly appear at https://github.com/salva/ps-Net-SSH-Any
+
+
